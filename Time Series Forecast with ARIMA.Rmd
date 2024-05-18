@@ -1,0 +1,113 @@
+---
+title: "Time Series Forecasting with ARMA Model"
+author: "YEN CHEN HSU"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document: default
+---
+```{r}
+suppressPackageStartupMessages({
+  library(TSA)
+  library(ggplot2)
+  library(dplyr)
+  library(forecast)
+  library(tseries) 
+  library(Metrics)
+  library(lmtest)
+  library(readr)
+})
+
+```
+
+This data set contains the Adjusted Closing Stock Price of Taiwan Semiconductor Manufacturing Company Limited (TSMC) from 2020/01/17 to 2024/02/16, we are interested in knowing the trend for the following 2 weeks (14 days)
+data source: https://finance.yahoo.com/quote/TSM/
+
+```{r}
+TSMC <- read_csv("TSMC.csv",show_col_types = FALSE)
+```
+
+```{r}
+# plot the data
+ts.plot(TSMC$Price, xlab="Time", ylab = "Price (USD)")
+
+# provide sample size
+set.seed(42) # For reproducibility
+sample_size <- 100
+sample_indices <- sample(1:length(TSMC$Price), sample_size)
+
+# Create a Sampled Time Series
+sampled_prices <- TSMC$Price[sample_indices]
+TSMC_sample <- ts(sampled_prices, start=start(TSMC$Price), frequency=frequency(TSMC$Price))
+print(TSMC_sample)
+```
+```{r}
+# leave the last 2 weeks for testing data prediction
+train_tsmc <- ts(TSMC$Price[1:1014], start = 1, end = 1014)
+test_tsmc <- ts(TSMC$Price[1015:1028], start = 1015, end = 1028)
+```
+
+# Stationarity Check with ADF test & ARMA Model Selection
+
+Use the `ADF test` to check for stationarity. Remove trend if necessary, and check the residuals for spurious regression (proof of random walk)
+
+Check ACF, PACF, and EACF for the order of the ARMA model (after differencing, if it has a random walk). Use AIC or BIC to select a final model from your candidate models. 
+
+```{r}
+print(adf.test(train_tsmc)) # the p-value of the training data indicates non-stationary
+tsmc_diff1=diff(train_tsmc,differences = 1) # conduct differencing to address non-stationary problem
+print(adf.test(tsmc_diff1)) # after differencing, we obtain a stationary result
+
+autoplot(tsmc_diff1) + geom_point(shape = 1, size = 1)
+#Final Model: ARIMA(p,d,q)(P,D,Q)[S]
+```
+Autocorrelation Function (ACF) and Partial Autocorrelation Function (PACF) plots are used to identify potential orders for an ARIMA model. The Extended ACF (EACF) is also used to refine the model selection.
+
+```{r}
+Acf(tsmc_diff1)
+Pacf(tsmc_diff1)
+```
+Judging from Acf and Pacf result, we are not able to identify p and q order for ARMA model, hence, we rely on eacf to obtain the result. If we look at the top left, the choice would be ARMA(3,0)
+```{r}
+eacf(tsmc_diff1)
+```
+```{r}
+Arima(train_tsmc,order=c(3,1,0)) #from eacf result
+```
+```{r}
+auto.arima(train_tsmc)
+```
+
+Based on the EACF results, an ARIMA(3,1,0) model is initially fitted. However, automated model selection using auto.arima suggests an ARIMA(0,1,1) model based on lower AIC and BIC values.
+
+Fitting our final model, write down the model 
+
+$$Y_t = -0.077848\cdot e_{t-1} + e_{t} $$
+
+# Fitting with ARIMA Model
+```{r}
+#arima_fit
+tsmc_fit=Arima(train_tsmc,order=c(0,1,1))
+coeftest(tsmc_fit)
+```
+Based on the calculation, the magnitude of the ma1 coefficient is approximately 2.54 times larger than its standard error, therefore, the ma1 coefficient is considered significant.
+
+# Forecast on the testing set. Report RMSE. 
+
+Plot the fitted value, as well as $80\%$ and $95\%$ prediction intervals, superimposed on the raw data.
+ 
+```{r}
+rw2=Arima(train_tsmc,order=c(0,1,1))
+
+rw2_pred <- forecast(rw2,h=14)
+
+autoplot(rw2_pred) +
+  autolayer(ts(test_tsmc,start=1014,end=1028), series="Data") +
+  autolayer(rw2_pred$mean, series="Forecasts") 
+```
+
+```{r}
+#Check the RMSE
+rmse(test_tsmc,rw2_pred$mean)
+```
+
